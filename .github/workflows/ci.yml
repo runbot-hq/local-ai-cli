@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build & Smoke Test
+    runs-on: [self-hosted, macos-m1]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build (release)
+        run: swift build -c release
+
+      - name: Smoke test — no args prints usage
+        run: |
+          ./.build/release/local-ai-cli 2>&1 | grep -q "Usage:" || \
+          { echo "Expected usage string not found"; exit 1; }
+
+      - name: Smoke test — live Ollama inference
+        run: |
+          ./.build/release/local-ai-cli \
+            --prompt "Reply with the single word: pong" \
+            --model qwen3.5:9b \
+            --maximum-response-tokens 10
