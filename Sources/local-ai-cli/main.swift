@@ -13,6 +13,7 @@ import Foundation
 //      --maximum-response-tokens → options.num_predict
 //      --base-url                → Ollama base URL (default: http://localhost:11434)
 //      --timeout                 → URLSessionConfiguration.timeoutIntervalForRequest in seconds (default: 300)
+//      --think                   → think (default: false)
 //   3. All JSON parsing, prompt assembly, and output formatting belongs in the
 //      caller (src/index.ts in action repos), not here.
 //
@@ -35,9 +36,9 @@ struct OllamaRequest: Codable {
     let messages: [Message]
     let options: Options
     let stream: Bool
-    // think: false disables the internal <think>...</think> reasoning pass on
-    // models that support it (e.g. qwen3.5). Without this flag the model
-    // exhausts max_tokens on chain-of-thought tokens and returns empty content.
+    // think: controls whether the model runs an internal <think>...</think>
+    // reasoning pass before responding. When true, chain-of-thought tokens are
+    // consumed before the visible response — requires higher max_tokens headroom.
     // Non-thinking models ignore this field.
     let think: Bool
 }
@@ -81,7 +82,7 @@ func arg(_ flag: String) -> String? {
 func localAiMain() async {
     guard let prompt = arg("--prompt"),
           !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-        fputs("Usage: local-ai-cli --prompt <text> [--instructions <text>] [--model <name>] [--temperature <double>] [--maximum-response-tokens <int>] [--base-url <url>] [--timeout <seconds>]\n", stderr)
+        fputs("Usage: local-ai-cli --prompt <text> [--instructions <text>] [--model <name>] [--temperature <double>] [--maximum-response-tokens <int>] [--base-url <url>] [--timeout <seconds>] [--think true|false]\n", stderr)
         exit(1)
     }
 
@@ -93,6 +94,10 @@ func localAiMain() async {
     // Default 300s — large models (qwen3.5:9b) can take >60s on cold load.
     // Callers can override via --timeout.
     let timeoutSeconds = arg("--timeout").flatMap(Double.init) ?? 300.0
+    // --think true|false (default: false)
+    // When true, the model runs a chain-of-thought reasoning pass before responding.
+    // Produces higher quality output but consumes more tokens and is slower.
+    let think = arg("--think").map { $0.lowercased() == "true" } ?? false
 
     // MARK: - Build messages array
     var messages: [OllamaRequest.Message] = []
@@ -106,7 +111,7 @@ func localAiMain() async {
         messages: messages,
         options: .init(temperature: temperature, num_predict: maxTokens),
         stream: false,
-        think: false
+        think: think
     )
 
     // MARK: - Build URL request
