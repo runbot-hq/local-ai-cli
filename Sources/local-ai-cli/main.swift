@@ -35,6 +35,11 @@ struct OllamaRequest: Codable {
     let messages: [Message]
     let options: Options
     let stream: Bool
+    // think: false disables the internal <think>...</think> reasoning pass on
+    // models that support it (e.g. qwen3.5). Without this flag the model
+    // exhausts max_tokens on chain-of-thought tokens and returns empty content.
+    // Non-thinking models ignore this field.
+    let think: Bool
 }
 
 struct OllamaResponse: Codable {
@@ -93,7 +98,8 @@ func localAiMain() async {
         model: model,
         messages: messages,
         options: .init(temperature: temperature, num_predict: maxTokens),
-        stream: false
+        stream: false,
+        think: false
     )
 
     // MARK: - Build URL request
