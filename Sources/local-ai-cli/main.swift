@@ -12,7 +12,7 @@ import Foundation
 //      --temperature             → options.temperature
 //      --maximum-response-tokens → options.num_predict
 //      --base-url                → Ollama base URL (default: http://localhost:11434)
-//      --timeout                 → URLRequest.timeoutIntervalForRequest in seconds (default: 300)
+//      --timeout                 → URLSessionConfiguration.timeoutIntervalForRequest in seconds (default: 300)
 //   3. All JSON parsing, prompt assembly, and output formatting belongs in the
 //      caller (src/index.ts in action repos), not here.
 //
@@ -79,8 +79,7 @@ func localAiMain() async {
     let maxTokens    = arg("--maximum-response-tokens").flatMap(Int.init)
     let instructions = arg("--instructions")
     // Default 300s — large models (qwen3.5:9b) can take >60s on cold load.
-    // URLSession.shared default is 60s which is insufficient; do NOT rely on
-    // the OS default. Callers can override via --timeout.
+    // Callers can override via --timeout.
     let timeoutSeconds = arg("--timeout").flatMap(Double.init) ?? 300.0
 
     // MARK: - Build messages array
@@ -112,10 +111,6 @@ func localAiMain() async {
     var request = URLRequest(url: url)
     request.httpMethod = "POST"
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    // Set explicit timeout — URLSession.shared default is 60s which is
-    // insufficient for large model cold loads. --timeout flag allows callers
-    // to override. Do NOT remove this line or revert to URLSession.shared default.
-    request.timeoutIntervalForRequest = timeoutSeconds
 
     do {
         request.httpBody = try JSONEncoder().encode(requestBody)
@@ -124,10 +119,23 @@ func localAiMain() async {
         exit(1)
     }
 
+    // MARK: - URLSession with explicit timeout
+    //
+    // URLSession.shared has a hardcoded 60s timeoutIntervalForRequest at the
+    // session level. Setting timeoutIntervalForRequest on the URLRequest alone
+    // does NOT override this — the session-level value wins when it is lower.
+    // We must create a custom session with the desired timeout set on the
+    // configuration. Do NOT revert to URLSession.shared — it will always
+    // timeout at 60s regardless of what is set on the URLRequest.
+    let config = URLSessionConfiguration.default
+    config.timeoutIntervalForRequest  = timeoutSeconds
+    config.timeoutIntervalForResource = timeoutSeconds + 60
+    let session = URLSession(configuration: config)
+
     // MARK: - Inference
 
     do {
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
 
         guard let http = response as? HTTPURLResponse else {
             fputs("Error: unexpected response type from Ollama\n", stderr)
