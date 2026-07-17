@@ -12,6 +12,7 @@ import Foundation
 //      --temperature             → options.temperature
 //      --maximum-response-tokens → options.num_predict
 //      --base-url                → Ollama base URL (default: http://localhost:11434)
+//      --timeout                 → URLRequest.timeoutIntervalForRequest in seconds (default: 300)
 //   3. All JSON parsing, prompt assembly, and output formatting belongs in the
 //      caller (src/index.ts in action repos), not here.
 //
@@ -68,7 +69,7 @@ func arg(_ flag: String) -> String? {
 func localAiMain() async {
     guard let prompt = arg("--prompt"),
           !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-        fputs("Usage: local-ai-cli --prompt <text> [--instructions <text>] [--model <name>] [--temperature <double>] [--maximum-response-tokens <int>] [--base-url <url>]\n", stderr)
+        fputs("Usage: local-ai-cli --prompt <text> [--instructions <text>] [--model <name>] [--temperature <double>] [--maximum-response-tokens <int>] [--base-url <url>] [--timeout <seconds>]\n", stderr)
         exit(1)
     }
 
@@ -77,6 +78,10 @@ func localAiMain() async {
     let temperature  = arg("--temperature").flatMap(Double.init)
     let maxTokens    = arg("--maximum-response-tokens").flatMap(Int.init)
     let instructions = arg("--instructions")
+    // Default 300s — large models (qwen3.5:9b) can take >60s on cold load.
+    // URLSession.shared default is 60s which is insufficient; do NOT rely on
+    // the OS default. Callers can override via --timeout.
+    let timeoutSeconds = arg("--timeout").flatMap(Double.init) ?? 300.0
 
     // MARK: - Build messages array
     var messages: [OllamaRequest.Message] = []
@@ -107,6 +112,10 @@ func localAiMain() async {
     var request = URLRequest(url: url)
     request.httpMethod = "POST"
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    // Set explicit timeout — URLSession.shared default is 60s which is
+    // insufficient for large model cold loads. --timeout flag allows callers
+    // to override. Do NOT remove this line or revert to URLSession.shared default.
+    request.timeoutIntervalForRequest = timeoutSeconds
 
     do {
         request.httpBody = try JSONEncoder().encode(requestBody)
@@ -116,11 +125,6 @@ func localAiMain() async {
     }
 
     // MARK: - Inference
-    //
-    // URLSession.shared.data(for:) is used for its async/await interface.
-    // No custom timeout is set here — callers (action src/index.ts) control
-    // timeout via spawnSync's timeout parameter. The OS default (no timeout)
-    // is intentional: large models can take >60s on first load.
 
     do {
         let (data, response) = try await URLSession.shared.data(for: request)
