@@ -49,6 +49,13 @@ struct OllamaResponse: Codable {
     }
     // /api/chat native response
     let message: OllamaRequest.Message?
+    // done_reason: "stop" = normal, "length" = hit num_predict limit, "load" = model still loading.
+    // Logged to stderr for diagnostics. Not an error condition on its own.
+    let done_reason: String?
+    // prompt_eval_count: number of tokens in the prompt (context usage)
+    let prompt_eval_count: Int?
+    // eval_count: number of tokens generated in the response
+    let eval_count: Int?
     // OpenAI-compat /v1/chat/completions response (future-proofing)
     let choices: [Choice]?
 }
@@ -155,12 +162,24 @@ func localAiMain() async {
         }
 
         let decoded = try JSONDecoder().decode(OllamaResponse.self, from: data)
+
+        // Log token usage and done_reason for diagnostics.
+        // done_reason=length means max_tokens was hit (response may be truncated or empty).
+        // done_reason=stop means normal completion.
+        let doneReason     = decoded.done_reason ?? "unknown"
+        let promptTokens   = decoded.prompt_eval_count.map(String.init) ?? "?"
+        let responseTokens = decoded.eval_count.map(String.init) ?? "?"
+        fputs("[diag] done_reason=\(doneReason) prompt_tokens=\(promptTokens) response_tokens=\(responseTokens)\n", stderr)
+        if doneReason == "length" {
+            fputs("[diag] WARNING: done_reason=length — response was cut off at max_tokens limit. Consider raising maximum_response_tokens.\n", stderr)
+        }
+
         let content = decoded.message?.content
             ?? decoded.choices?.first?.message.content
             ?? ""
 
         if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            fputs("Error: model returned empty response\n", stderr)
+            fputs("Error: model returned empty response (done_reason=\(doneReason), prompt_tokens=\(promptTokens), response_tokens=\(responseTokens))\n", stderr)
             exit(1)
         }
 
